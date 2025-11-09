@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manage Menu</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="center-layout">
+    <header class="header">
+        <img src="/logo.png" alt="CallMyTurn Logo" class="header-logo">
+    </header>
+
+    <div class="card" style="max-width: 800px;">
+        <h2>Current Menu Items</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item Name</th>
+                        <th>Price</th>
+                        <th>Category</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    </tbody>
+            </table>
+        </div>
+
+        <hr class="divider">
+
+        <h2>Add New Menu Item</h2>
+        <form action="/staff/add-item" method="POST">
+            <div class="form-group">
+                <label for="name">Item Name</label>
+                <input type="text" id="name" name="name" required>
+            </div>
+            <div class="form-group">
+                <label for="price">Price (₹)</label>
+                <input type="number" id="price" name="price" required>
+            </div>
+            <div class="form-group">
+                <label for="category">Category</label>
+                <input type="text" id="category" name="category" placeholder="e.g., Breakfast, Lunch, Snacks" required>
+            </div>
+            <div class="form-group">
+                <label for="imageUrl">Image URL</label>
+                <input type="text" id="imageUrl" name="imageUrl" placeholder="https://example.com/image.jpg">
+            </div>
+            <button type="submit" class="btn"><i class="fas fa-plus"></i> Add Item to Menu</button>
+        </form>
+        <a href="/staff/dashboard" class="btn btn-secondary" style="margin-top: 1rem;">Back to Orders</a>
+    </div>
+</body>
+</html>

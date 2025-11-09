@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Food</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="header">
+        <img src="/logo.png" alt="CallMyTurn Logo" class="header-logo">
+        
+        <a href="/student/my-orders" class="btn" style="width: auto; position: absolute; top: 20px; right: 30px;">
+            <i class="fas fa-receipt"></i> My Orders
+        </a>
+    </header>
+
+    <div class="container">
+        <div class="menu-container">
+            <div id="menu-content-header">
+                <h2>Canteen Menu</h2>
+                <p class="tagline">Don't Wait - Order Now!</p>
+            </div>
+            <div id="menu-content-grid">
+                </div>
+        </div>
+
+        <div class="cart-container">
+            <div class="card cart-card">
+                <h2>My Order</h2>
+                <div id="cart-items">
+                    <p class="cart-empty-msg">Your cart is empty. Add items from the menu!</p>
+                </div>
+                <div class="cart-total" style="display: none;">
+                    <strong>Total: ₹<span id="cart-total-price">0</span></strong>
+                </div>
+                <form id="order-form" action="/student/place-order" method="POST">
+                    <input type="hidden" name="cartItems" id="cart-items-input">
+                    <button type="submit" class="btn btn-place-order" disabled>Place Order</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <script>
+        const cart = {};
+        const cartItemsContainer = document.getElementById('cart-items');
+        const cartTotalPriceEl = document.getElementById('cart-total-price');
+        const cartTotalContainer = document.querySelector('.cart-total');
+        const placeOrderBtn = document.querySelector('.btn-place-order');
+        const cartItemsInput = document.getElementById('cart-items-input');
+        const orderForm = document.getElementById('order-form');
+
+        function updateCartDisplay() {
+            cartItemsContainer.innerHTML = '';
+            let totalPrice = 0;
+            const hasItems = Object.keys(cart).length > 0;
+            
+            if (!hasItems) {
+                cartItemsContainer.innerHTML = '<p class="cart-empty-msg">Your cart is empty. Add items from the menu!</p>';
+                cartTotalContainer.style.display = 'none';
+                placeOrderBtn.disabled = true;
+                updateMenuButtons();
+                return;
+            }
+            
+            cartTotalContainer.style.display = 'block';
+            placeOrderBtn.disabled = false;
+            
+            for (const id in cart) {
+                const item = cart[id];
+                totalPrice += item.price * item.quantity;
+                const itemEl = document.createElement('div');
+                itemEl.className = 'cart-item';
+                itemEl.innerHTML = `
+                    <div class="cart-item-details">
+                        <span class="cart-item-name">${item.name}</span>
+                        <span class="cart-item-price">₹${item.price}</span>
+                    </div>
+                    <div class="cart-item-actions">
+                        <button onclick="changeQuantity(${id}, -1)">-</button>
+                        <span>${item.quantity}</span>
+                        <button onclick="changeQuantity(${id}, 1)">+</button>
+                    </div>
+                `;
+                cartItemsContainer.appendChild(itemEl);
+            }
+            cartTotalPriceEl.textContent = totalPrice;
+            updateMenuButtons();
+        }
+
+        function changeQuantity(id, amount) {
+            if (!cart[id] && amount > 0) {
+                // Add new item to cart
+                const menuItemEl = document.querySelector(`.food-card-grid[data-item-id="${id}"]`);
+                const name = menuItemEl.dataset.itemName;
+                const price = parseInt(menuItemEl.dataset.itemPrice, 10);
+                cart[id] = { name, price, quantity: 1 };
+            } 
+            else if (cart[id]) {
+                // Update existing item quantity
+                cart[id].quantity += amount;
+                if (cart[id].quantity <= 0) {
+                    delete cart[id];
+                }
+            }
+            updateCartDisplay();
+        }
+        
+        function updateMenuButtons() {
+            const allAddButtonContainers = document.querySelectorAll('.add-btn-container');
+            allAddButtonContainers.forEach(container => {
+                const id = container.dataset.itemId;
+                if (cart[id]) {
+                    // Show quantity stepper
+                    container.innerHTML = `
+                        <div class="quantity-stepper">
+                            <button onclick="changeQuantity(${id}, -1)">-</button>
+                            <span>${cart[id].quantity}</span>
+                            <button onclick="changeQuantity(${id}, 1)">+</button>
+                        </div>
+                    `;
+                } else {
+                    // Show 'ADD' button
+                    container.innerHTML = `
+                        <button class="btn-add-to-cart" onclick="changeQuantity(${id}, 1)">
+                            <i class="fas fa-shopping-cart"></i> ADD
+                        </button>
+                    `;
+                }
+            });
+        }
+
+        // Prepare cart data for form submission
+        orderForm.addEventListener('submit', function(event) {
+            const cartAsArray = Object.keys(cart).map(id => {
+                const item = cart[id];
+                return { id: parseInt(id), name: item.name, price: item.price, quantity: item.quantity };
+            });
+            cartItemsInput.value = JSON.stringify(cartAsArray);
+        });
+
+        // Initialize the cart display when the page loads
+        document.addEventListener('DOMContentLoaded', updateCartDisplay);
+    </script>
+</body>
+</html>

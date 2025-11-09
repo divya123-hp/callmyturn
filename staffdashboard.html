@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Staff Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="center-layout" style="justify-content: flex-start;">
+    <header class="header">
+        <img src="/logo.png" alt="CallMyTurn Logo" class="header-logo">
+    </header>
+
+    <div class="card" style="max-width: 900px; text-align: left;">
+        <h2>Live Orders</h2>
+        
+        <div class="admin-nav">
+            <a href="/staff/manage-menu" class="btn btn-secondary"><i class="fas fa-utensils"></i> Manage Menu</a>
+            <a href="/staff/manage-users" class="btn btn-secondary"><i class="fas fa-users"></i> Manage Users</a>
+            <a href="/logout" class="btn btn-logout" style="width: auto; background-color: var(--danger-color);"><i class="fas fa-sign-out-alt"></i> Logout</a>
+        </div>
+        
+        <hr class="divider">
+
+        <div id="live-orders-list">
+            </div>
+    </div>
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // You can add client-side socket listeners here if needed
+        // For example, to play a sound on a new order
+        const socket = io();
+        
+        socket.on('new_order', (data) => {
+            // Optional: Play a notification sound
+            // const audio = new Audio('/notification.mp3');
+            // audio.play();
+            
+            // We reload to show the new order.
+            // A more advanced way would be to inject the HTML, but reload is simple and works.
+            location.reload();
+        });
+    </script>
+</body>
+</html>

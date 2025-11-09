@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Login</title>
+    <link rel="stylesheet" href="style.css">
+</head> 
+
+<body>
+    <center>
+    <header class="header">CallMyTurn Canteen</header>
+    <div class="card">
+        <h2>Student / Staff Login</h2>
+        <p>Order food and track your order status here.</p>
+        <form method="POST" action="/user/login">
+            <div class="form-group">
+                <label for="username">Roll Number / Staff ID</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit" class="btn">Login</button>
+        </form>
+    </div>
+    </center>
+</body>
+
+</html>

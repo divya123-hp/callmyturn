@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register | Call My Turn</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="center-layout">
+    <header class="header">
+        <img src="/logo.png" alt="CallMyTurn Logo" class="header-logo">
+    </header>
+
+    <div class="card login-portal-card">
+        <h2>Create an Account</h2>
+        <p class="subtle-text">Sign up to get started.</p>
+        
+        <form method="POST" action="/register">
+            <div class="form-group">
+                <label for="username">Username / Roll Number</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label for="role">I am a:</label>
+                <select name="role" id="role" class="form-group input" style="padding: 0.8rem 1rem; height: 50px;">
+                    <option value="student">Student</option>
+                    <option value="staff">Canteen Staff</option>
+                </select>
+            </div>
+            <button type="submit" class="btn">Register</button>
+        </form>
+
+        <div class="switch" style="margin-top: 15px; text-align: center;">
+            <p>Already have an account? <a href="/">Login here</a></p>
+        </div>
+    </div>
+</body>
+</html>

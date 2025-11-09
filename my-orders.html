@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Orders</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="center-layout" style="justify-content: flex-start;">
+    <header class="header">
+        <img src="/logo.png" alt="CallMyTurn Logo" class="header-logo">
+    </header>
+
+    <div class="card" style="max-width: 800px; text-align: left;">
+        <h2>My Active Orders</h2>
+        <p class="subtle-text">Your order status will update here in real-time. No need to refresh!</p>
+        
+        <div id="active-orders-list">
+            </div>
+
+        <a href="/student/dashboard" class="btn btn-secondary" style="margin-top: 1.5rem;">Back to Menu</a>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <script>
+        const socket = io();
+
+        // Listen for the 'order_status_updated' event from the server
+        socket.on('order_status_updated', (data) => {
+            const { orderId, newStatus } = data;
+            
+            // Find the order card on the page
+            const orderCard = document.getElementById(`order-${orderId}`);
+            if (orderCard) {
+                // Find the status element and update its text
+                const statusEl = orderCard.querySelector('.order-status-live');
+                if (statusEl) {
+                    statusEl.textContent = newStatus;
+                    statusEl.className = 'order-status-live'; // Reset classes
+                    
+                    // Add new class for styling
+                    if (newStatus === 'Preparing') {
+                        statusEl.classList.add('status-preparing');
+                    } else if (newStatus === 'Ready for Pickup') {
+                        statusEl.classList.add('status-ready');
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
