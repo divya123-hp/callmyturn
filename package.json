@@ -1,18 +1,17 @@
 {
-  "name": "callmyturn",
+  "name": "canteen-app",
   "version": "1.0.0",
-  "description": "A college canteen ordering system.",
+  "description": "Canteen order app",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "author": "",
-  "license": "ISC",
   "dependencies": {
+    "bcrypt": "^5.1.1",
     "express": "^4.18.2",
     "express-session": "^1.17.3",
-    "mysql": "^2.18.1",
-    "node-cron": "^4.2.1",
-    "socket.io": "^4.7.2"
+    "node-cron": "^3.0.3",
+    "pg": "^8.11.3",
+    "socket.io": "^4.7.4"
   }
 }

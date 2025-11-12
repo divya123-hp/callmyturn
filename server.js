@@ -1,366 +1,576 @@
+// =================================================================
+// --- IMPORTS ---
+// =================================================================
 const express = require('express');
-const path = require('path');
+const { Pool } = require('pg'); // <-- Replaced 'mysql' with 'pg'
+const bcrypt = require('bcrypt');
 const session = require('express-session');
+const path = require('path');
 const http = require('http');
 const { Server } = require("socket.io");
-const mysql = require('mysql');
 const fs = require('fs');
-const cron = require('node-cron'); // For scheduled tasks
+const cron = require('node-cron');
 
+// =================================================================
+// --- APP & SOCKET.IO SETUP ---
+// =================================================================
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // =================================================================
-// --- DATABASE CONNECTION ---
+// --- DATABASE CONNECTION (POSTGRESQL) ---
 // =================================================================
-const db = mysql.createPool({
-    connectionLimit: 10,
-    host: 'localhost',
-    user: 'root',
-    password: '', // default for XAMPP
-    database: 'canteen_db'
-});
-
-db.getConnection((err, connection) => {
-    if (err) {
-        console.error('❌ Error connecting to MySQL:', err);
-        return;
+// Render provides a DATABASE_URL environment variable
+// This connects to your new PostgreSQL database
+const db = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false // Required for Render connections
     }
-    console.log('✅ Connected to MySQL Database');
-    connection.release();
+});
+
+// Test DB connection
+db.connect((err, client, release) => {
+    if (err) {
+        return console.error('Error acquiring client', err.stack);
+    }
+    console.log('🐘 Successfully connected to PostgreSQL database!');
+    client.release();
+    // After connecting, run the database setup
+    initializeDatabase();
 });
 
 // =================================================================
-// --- DAILY CLEANUP AT 1 AM ---
+// --- NEW: AUTOMATIC DATABASE TABLE CREATOR ---
 // =================================================================
-cron.schedule('0 1 * * *', () => {
+async function initializeDatabase() {
+    console.log('🔧 Initializing database...');
+    const client = await db.connect();
+    try {
+        // Create users table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'student'
+            );
+        `);
+        console.log('✅ "users" table checked/created.');
+
+        // Create menu_items table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS menu_items (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                price INT NOT NULL,
+                image_url VARCHAR(255),
+                is_available INT DEFAULT 1
+            );
+        `);
+        console.log('✅ "menu_items" table checked/created.');
+
+        // Create orders table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id),
+                total_price INT NOT NULL,
+                status VARCHAR(50) DEFAULT 'Pending',
+                items JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('✅ "orders" table checked/created.');
+        console.log('🎉 Database initialization complete!');
+        
+    } catch (err) {
+        console.error('🔥 Error during database initialization:', err);
+    } finally {
+        client.release();
+    }
+}
+
+
+// =================================================================
+// --- APP SETUP (MIDDLEWARE) ---
+// =================================================================
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json()); // Added for cart submission
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'a-fallback-secret-key-just-in-case',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { secure: 'auto' }
+}));
+
+// =================================================================
+// --- AUTHENTICATION MIDDLEWARE ---
+// =================================================================
+const isAuthenticated = (req, res, next) => {
+    if (!req.session.user) {
+        return res.redirect('/student-login.html');
+    }
+    next();
+};
+
+const isStaff = (req, res, next) => {
+    if (!req.session.user || req.session.user.role !== 'staff') {
+        return res.redirect('/staff-login.html');
+    }
+    next();
+};
+
+// =================================================================
+// --- HTML FILE SERVING ---
+// =================================================================
+const servePage = (filePath) => (req, res) => {
+    const fullPath = path.join(__dirname, 'public', filePath);
+    fs.readFile(fullPath, 'utf8', (err, html) => {
+        if (err) {
+            console.error(`Error reading file ${filePath}:`, err);
+            return res.status(404).send('Page not found');
+        }
+        res.send(html);
+    });
+};
+
+app.get('/', servePage('student-login.html'));
+app.get('/student-login', servePage('student-login.html'));
+app.get('/staff-login', servePage('staff-login.html'));
+app.get('/register', servePage('register.html'));
+app.get('/logout', (req, res) => {
+    req.session.destroy(err => {
+        if (err) return res.redirect('/');
+        res.clearCookie('connect.sid');
+        res.redirect('/student-login');
+    });
+});
+
+// =================================================================
+// --- AUTHENTICATION ROUTES (POSTGRESQL SYNTAX) ---
+// =================================================================
+
+// User Registration
+app.post('/register', async (req, res) => {
+    const { username, password, role = 'student' } = req.body;
+    try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // PostgreSQL uses $1, $2, $3 for placeholders
+        const query = 'INSERT INTO users (username, password, role) VALUES ($1, $2, $3) RETURNING id';
+        const values = [username, hashedPassword, role];
+        
+        const result = await db.query(query, values);
+        
+        req.session.user = { id: result.rows[0].id, username, role };
+        
+        if (role === 'staff') {
+            res.redirect('/staffdashboard');
+        } else {
+            res.redirect('/studentdashboard');
+        }
+    } catch (err) {
+        console.error('Registration error:', err);
+        res.status(500).send('Error registering user. Username may already be taken.');
+    }
+});
+
+// User Login
+app.post('/login', async (req, res) => {
+    const { username, password, role } = req.body; // role comes from hidden input
+    try {
+        const query = 'SELECT * FROM users WHERE username = $1 AND role = $2';
+        const result = await db.query(query, [username, role]);
+        
+        if (result.rows.length === 0) {
+            return res.status(400).send('Invalid username or password.');
+        }
+
+        const user = result.rows[0];
+        const match = await bcrypt.compare(password, user.password);
+
+        if (match) {
+            req.session.user = { id: user.id, username: user.username, role: user.role };
+            if (user.role === 'staff') {
+                res.redirect('/staffdashboard');
+            } else {
+                res.redirect('/studentdashboard');
+            }
+        } else {
+            res.status(400).send('Invalid username or password.');
+        }
+    } catch (err) {
+        console.error('Login error:', err);
+        res.status(500).send('An error occurred during login.');
+    }
+});
+
+// =================================================================
+// --- STUDENT ROUTES (POSTGRESQL SYNTAX) ---
+// =================================================================
+
+// Student Dashboard - Load Menu
+app.get('/studentdashboard', isAuthenticated, async (req, res) => {
+    const fullPath = path.join(__dirname, 'public', 'studentdashboard.html');
+    try {
+        const menuResult = await db.query('SELECT * FROM menu_items WHERE is_available = 1 ORDER BY id');
+        let menuHtml = '';
+
+        if (menuResult.rows.length === 0) {
+            menuHtml = '<p>The canteen is currently not serving any items. Please check back later!</p>';
+        } else {
+            menuResult.rows.forEach(item => {
+                menuHtml += `
+                    <div class="card food-card-grid" data-item-id="${item.id}" data-item-name="${item.name}" data-item-price="${item.price}">
+                        <img src="${item.image_url}" alt="${item.name}">
+                        <div class="food-card-title">${item.name}</div>
+                        <div class="food-card-price">₹${item.price}</div>
+                        <div class="add-btn-container" data-item-id="${item.id}">
+                            <button class="btn-add-to-cart" onclick="changeQuantity(${item.id}, 1)">
+                                <i class="fas fa-shopping-cart"></i> ADD
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+        
+        fs.readFile(fullPath, 'utf8', (err, html) => {
+            if (err) throw err;
+            const finalHtml = html.replace('', menuHtml);
+            res.send(finalHtml);
+        });
+
+    } catch (err) {
+        console.error('Error loading student dashboard:', err);
+        res.status(500).send('Error loading page.');
+    }
+});
+
+// Place Order (Transaction)
+app.post('/student/place-order', isAuthenticated, async (req, res) => {
+    const { cartItems } = req.body; // This is a JSON string
+    const userId = req.session.user.id;
+    
+    // This is a PostgreSQL Transaction
+    const client = await db.connect();
+    try {
+        const items = JSON.parse(cartItems);
+        if (items.length === 0) {
+            return res.status(400).send('Cart is empty.');
+        }
+
+        let totalPrice = 0;
+        items.forEach(item => {
+            totalPrice += item.price * item.quantity;
+        });
+        
+        // PostgreSQL uses JSONB for storing JSON
+        const itemsJson = JSON.stringify(items); 
+        
+        await client.query('BEGIN'); // Start transaction
+        
+        // PostgreSQL's RETURNING id (or in this case, *) gets us the new row
+        const query = 'INSERT INTO orders (user_id, total_price, status, items) VALUES ($1, $2, $3, $4) RETURNING *';
+        const values = [userId, totalPrice, 'Pending', itemsJson];
+        
+        const result = await client.query(query, values);
+        const newOrder = result.rows[0];
+        
+        await client.query('COMMIT'); // Commit transaction
+        
+        // Emit to staff
+        io.emit('new_order', newOrder); 
+        
+        // Redirect to token page
+        res.redirect(`/student/token/${newOrder.id}`);
+
+    } catch (err) {
+        await client.query('ROLLBACK'); // Rollback on error
+        console.error('Error placing order:', err);
+        res.status(500).send('Error placing order.');
+    } finally {
+        client.release(); // Release client back to pool
+    }
+});
+
+// Get My Orders Page
+app.get('/student/my-orders', isAuthenticated, (req, res) => {
+    servePage('my-orders.html')(req, res);
+});
+
+// Get Token Page
+app.get('/student/token/:orderId', isAuthenticated, (req, res) => {
+    servePage('token.html')(req, res);
+});
+
+// API: Get orders for "My Orders" page (for fetch)
+app.get('/api/student/my-orders', isAuthenticated, async (req, res) => {
+    try {
+        const query = 'SELECT * FROM orders WHERE user_id = $1 AND created_at > NOW() - INTERVAL \'24 hours\' ORDER BY created_at DESC';
+        const result = await db.query(query, [req.session.user.id]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching student orders:', err);
+        res.status(500).json({ error: 'Failed to fetch orders' });
+    }
+});
+
+// API: Get single order status (for token page)
+app.get('/api/student/order-status/:orderId', isAuthenticated, async (req, res) => {
+    try {
+        const query = 'SELECT id, status, total_price, items FROM orders WHERE id = $1 AND user_id = $2';
+        const result = await db.query(query, [req.params.orderId, req.session.user.id]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error fetching order status:', err);
+        res.status(500).json({ error: 'Failed to fetch order status' });
+    }
+});
+
+// =================================================================
+// --- STAFF ROUTES (POSTGRESQL SYNTAX) ---
+// =================================================================
+
+// Staff Dashboard - Load Orders
+app.get('/staffdashboard', isStaff, async (req, res) => {
+    const fullPath = path.join(__dirname, 'public', 'staffdashboard.html');
+    try {
+        // Get all non-completed orders from the last 24 hours
+        const query = `
+            SELECT o.id, o.status, o.items, o.total_price, u.username 
+            FROM orders o
+            JOIN users u ON o.user_id = u.id
+            WHERE o.status != 'Completed' AND o.created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY o.created_at ASC
+        `;
+        const result = await db.query(query);
+        let ordersHtml = '';
+
+        if (result.rows.length === 0) {
+            ordersHtml = '<h3>No pending orders.</h3>';
+        } else {
+            result.rows.forEach(order => {
+                ordersHtml += buildOrderCard(order); // We will define this function
+            });
+        }
+        
+        fs.readFile(fullPath, 'utf8', (err, html) => {
+            if (err) throw err;
+            const finalHtml = html.replace('', ordersHtml);
+            res.send(finalHtml);
+        });
+
+    } catch (err) {
+        console.error('Error loading staff dashboard:', err);
+        res.status(500).send('Error loading page.');
+    }
+});
+
+// Helper function to build order card HTML
+function buildOrderCard(order) {
+    let itemsHtml = '<ul>';
+    order.items.forEach(item => {
+        itemsHtml += `<li>${item.quantity} x ${item.name}</li>`;
+    });
+    itemsHtml += '</ul>';
+
+    const isPending = order.status === 'Pending';
+    const isPreparing = order.status === 'Preparing';
+    const isReady = order.status === 'Ready';
+
+    return `
+        <div class="card order-card card-status-${order.status.toLowerCase()}">
+            <div class="order-card-header">
+                <h4>Token #${order.id}</h4>
+                <span>User: ${order.username}</span>
+            </div>
+            <div class="order-card-body">
+                ${itemsHtml}
+            </div>
+            <div class="order-card-footer">
+                <strong>Total: ₹${order.total_price}</strong>
+                <div class="order-card-actions">
+                    <form action="/staff/update-status" method="POST" style="display: inline;">
+                        <input type="hidden" name="orderId" value="${order.id}">
+                        <input type="hidden" name="newStatus" value="Preparing">
+                        <button type="submit" class="btn btn-status-prep" ${!isPending ? 'disabled' : ''}>
+                            <i class="fas fa-hourglass-start"></i> Start Prep
+                        </button>
+                    </form>
+                    <form action="/staff/update-status" method="POST" style="display: inline;">
+                        <input type="hidden" name="orderId" value="${order.id}">
+                        <input type="hidden" name="newStatus" value="Ready">
+                        <button type="submit" class="btn btn-status-ready" ${!isPreparing ? 'disabled' : ''}>
+                            <i class="fas fa-bell"></i> Mark Ready
+                        </button>
+                    </form>
+                    <form action="/staff/update-status" method="POST" style="display: inline;">
+                        <input type="hidden" name="orderId" value="${order.id}">
+                        <input type="hidden" name="newStatus" value="Completed">
+                        <button type="submit" class="btn btn-status-done" ${!isReady ? 'disabled' : ''}>
+                            <i class="fas fa-check-circle"></i> Mark Completed
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Staff: Update Order Status
+app.post('/staff/update-status', isStaff, async (req, res) => {
+    const { orderId, newStatus } = req.body;
+    try {
+        const query = 'UPDATE orders SET status = $1 WHERE id = $2 RETURNING *';
+        const result = await db.query(query, [newStatus, orderId]);
+
+        if (result.rows.length > 0) {
+            // Emit status update to the specific student's "room"
+            const updatedOrder = result.rows[0];
+            const studentRoom = `user_${updatedOrder.user_id}`;
+            io.to(studentRoom).emit('order_status_update', updatedOrder);
+            
+            // Also emit to a general 'token' room for the token page
+            const tokenRoom = `order_${orderId}`;
+            io.to(tokenRoom).emit('order_status_update', updatedOrder);
+        }
+        res.redirect('/staffdashboard');
+    } catch (err) {
+        console.error('Error updating status:', err);
+        res.status(500).send('Error updating status.');
+    }
+});
+
+
+// --- Menu Management Routes ---
+
+app.get('/staff/manage-menu', isStaff, async (req, res) => {
+    const fullPath = path.join(__dirname, 'public', 'manage-menu.html');
+    try {
+        const result = await db.query('SELECT * FROM menu_items ORDER BY id');
+        let tableRows = '';
+        result.rows.forEach(item => {
+            tableRows += `
+                <tr>
+                    <td>${item.id}</td>
+                    <td><img src="${item.image_url}" alt="${item.name}" class="menu-item-thumbnail"></td>
+                    <td>${item.name}</td>
+                    <td>₹${item.price}</td>
+                    <td>${item.is_available == 1 ? 'Yes' : 'No'}</td>
+                    <td>
+                        <form action="/staff/menu/toggle" method="POST" style="display:inline;">
+                            <input type="hidden" name="id" value="${item.id}">
+                            <input type="hidden" name="current_status" value="${item.is_available}">
+                            <button type="submit" class="btn btn-secondary">
+                                ${item.is_available == 1 ? 'Make Unavailable' : 'Make Available'}
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+            `;
+        });
+        
+        fs.readFile(fullPath, 'utf8', (err, html) => {
+            if (err) throw err;
+            const finalHtml = html.replace('', tableRows);
+            res.send(finalHtml);
+        });
+    } catch (err) {
+        console.error('Error loading menu management:', err);
+        res.status(500).send('Error loading page.');
+    }
+});
+
+app.post('/staff/menu/add', isStaff, async (req, res) => {
+    const { name, price, image_url } = req.body;
+    try {
+        const query = 'INSERT INTO menu_items (name, price, image_url, is_available) VALUES ($1, $2, $3, 1)';
+        await db.query(query, [name, price, image_url]);
+        res.redirect('/staff/manage-menu');
+    } catch (err) {
+        console.error('Error adding menu item:', err);
+        res.status(500).send('Error adding item.');
+    }
+});
+
+app.post('/staff/menu/toggle', isStaff, async (req, res) => {
+    const { id, current_status } = req.body;
+    // New status is the opposite of the current status
+    const newStatus = (current_status == 1) ? 0 : 1; 
+    try {
+        const query = 'UPDATE menu_items SET is_available = $1 WHERE id = $2';
+        await db.query(query, [newStatus, id]);
+        res.redirect('/staff/manage-menu');
+    } catch (err) {
+        console.error('Error toggling menu item:', err);
+        res.status(500).send('Error toggling item.');
+    }
+});
+
+// =================================================================
+// --- SOCKET.IO LOGIC ---
+// =================================================================
+io.on('connection', (socket) => {
+    console.log('A user connected:', socket.id);
+
+    // Join a room based on user ID (for "My Orders")
+    socket.on('join_user_room', (userId) => {
+        socket.join(`user_${userId}`);
+        console.log(`User ${socket.id} joined room user_${userId}`);
+    });
+
+    // Join a room based on order ID (for "Token Page")
+    socket.on('join_token_room', (orderId) => {
+        socket.join(`order_${orderId}`);
+        console.log(`User ${socket.id} joined room order_${orderId}`);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('User disconnected:', socket.id);
+    });
+});
+
+// =================================================================
+// --- DAILY CLEANUP AT 1 AM (POSTGRESQL SYNTAX) ---
+// =================================================================
+cron.schedule('0 1 * * *', async () => {
     console.log('🧹 Running daily cleanup at 1 AM...');
-    db.query(`DELETE FROM orders WHERE status != 'Completed'`, (err, result) => {
-        if (err) console.error(err);
-        else console.log(`Deleted ${result.affectedRows} incomplete orders`);
-    });
-    db.query(`DELETE FROM orders WHERE status = 'Completed' AND created_at < NOW() - INTERVAL 23 HOUR`, (err, result) => {
-        if (err) console.error(err);
-        else console.log(`Deleted ${result.affectedRows} old completed orders`);
-    });
-    db.query('ALTER TABLE orders AUTO_INCREMENT = 1', (err, result) => {
-        if (err) console.error("Error resetting token counter:", err);
-        else console.log('- Token counter has been reset to 1.');
-    });
-    console.log('✅ Cleanup complete');
+    const client = await db.connect();
+    try {
+        // 1. Deletes old, incomplete orders
+        await client.query("DELETE FROM orders WHERE status != 'Completed'");
+        
+        // 2. Deletes old, completed orders
+        await client.query("DELETE FROM orders WHERE status = 'Completed' AND created_at < NOW() - INTERVAL '23 hours'");
+        
+        // 3. THIS IS THE TOKEN RESET
+        // This command resets the 'id' counter (sequence) of the 'orders' table
+        // Note: The sequence name 'orders_id_seq' is the default for a SERIAL column.
+        await client.query('ALTER SEQUENCE orders_id_seq RESTART WITH 1');
+        
+        console.log('✅ Cleanup complete. Token counter reset to 1.');
+    } catch (err) {
+        console.error('Error during daily cleanup:', err);
+    } finally {
+        client.release();
+    }
 }, {
     scheduled: true,
     timezone: "Asia/Kolkata"
 });
 
 // =================================================================
-// --- APP SETUP ---
-// =================================================================
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.urlencoded({ extended: true }));
-app.use(session({
-    secret: 'canteen-app-secret',
-    resave: false,
-    saveUninitialized: true,
-}));
-
-// =================================================================
-// --- ROUTES ---
-// =================================================================
-
-// Main student login page
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'student-login.html'));
-});
-
-// Staff login page
-app.get('/staff-login', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'staff-login.html'));
-});
-
-// --- NEW --- Show the registration page
-app.get('/register', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'register.html'));
-});
-
-// --- NEW --- Handle the registration form
-app.post('/register', (req, res) => {
-    const { username, password, role } = req.body;
-
-    // TODO: Add check here to see if user already exists
-    
-    const newUser = {
-        username: username,
-        password: password, // You should hash this in a real app!
-        role: role
-    };
-
-    db.query('INSERT INTO users SET ?', newUser, (err, result) => {
-        if (err) {
-            console.error("Error registering user:", err);
-            // If user already exists, it might throw an error
-            return res.redirect('/register?error=1');
-        }
-        console.log(`New user created: ${username}`);
-        // Send them to the main login page after they register
-        res.redirect('/'); 
-    });
-});
-
-
-// ------------------------- STUDENT LOGIN -------------------------
-app.post('/user/login', (req, res) => {
-    const { username, password } = req.body;
-    db.query('SELECT * FROM users WHERE username = ? AND password = ? AND role = "student"',
-        [username, password],
-        (err, results) => {
-            if (err) throw err;
-            if (results.length > 0) {
-                const user = results[0];
-                req.session.user = { id: user.id, username: user.username, role: user.role };
-                res.redirect('/student/dashboard');
-            } else {
-                res.redirect('/?error=1');
-            }
-        });
-});
-
-// ------------------------- STAFF LOGIN -------------------------
-app.post('/canteen/login', (req, res) => {
-    const { username, password } = req.body;
-    db.query('SELECT * FROM users WHERE username = ? AND password = ? AND role = "staff"',
-        [username, password],
-        (err, results) => {
-            if (err) throw err;
-            if (results.length > 0) {
-                const user = results[0];
-                req.session.user = { id: user.id, username: user.username, role: user.role };
-                res.redirect('/staff/dashboard');
-            } else {
-                res.redirect('/staff-login?error=1');
-            }
-        });
-});
-
-app.get('/logout', (req, res) => {
-    req.session.destroy(() => res.redirect('/'));
-});
-
-// Middleware
-const isAuthenticated = (role) => (req, res, next) => {
-    if (req.session.user && req.session.user.role === role) return next();
-    res.redirect('/');
-};
-
-// =================================================================
-// --- STUDENT ROUTES ---
-// =================================================================
-app.get('/student/dashboard', isAuthenticated('student'), (req, res) => {
-    db.query('SELECT * FROM menu_items WHERE is_available = TRUE ORDER BY name', (err, menuItems) => {
-        if (err) throw err;
-        let menuHtml = '<h3>No items available.</h3>';
-        if (menuItems.length > 0) {
-            menuHtml = '';
-            menuItems.forEach(item => {
-                menuHtml += `
-                    <div class="food-card-grid" data-item-id="${item.id}" data-item-name="${item.name}" data-item-price="${item.price}">
-                        <img src="${item.imageUrl}" alt="${item.name}" class="food-card-grid-img">
-                        <div class="food-card-grid-body">
-                            <h3 class="food-card-grid-title">${item.name}</h3>
-                            <p class="food-card-grid-price">₹${item.price}</p>
-                            <div class="add-btn-container" data-item-id="${item.id}">
-                                <button class="btn-add-to-cart" onclick="changeQuantity(${item.id}, 1)"><i class="fas fa-shopping-cart"></i> ADD</button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-        }
-        const dashboardPath = path.join(__dirname, 'public', 'studentdashboard.html');
-        const html = fs.readFileSync(dashboardPath, 'utf8');
-        res.send(html.replace('', menuHtml));
-    });
-});
-
-app.post('/student/place-order', isAuthenticated('student'), (req, res) => {
-    const { cartItems } = req.body;
-    if (!cartItems) return res.redirect('/student/dashboard?error=empty_cart');
-
-    const itemsFromCart = JSON.parse(cartItems);
-    if (itemsFromCart.length === 0) return res.redirect('/student/dashboard?error=empty_cart');
-
-    const newOrder = { 
-        items: JSON.stringify(itemsFromCart),
-        user_id: req.session.user.id,
-        status: 'Placed'
-    };
-
-    db.query('INSERT INTO orders SET ?', newOrder, (err, result) => {
-        if (err) throw err;
-        const tokenNumber = result.insertId; 
-        io.emit('new_order', { id: tokenNumber, items: itemsFromCart, student: req.session.user.username });
-        req.session.lastOrderToken = tokenNumber;
-        res.redirect('/order-success');
-    });
-});
-
-app.get('/order-success', isAuthenticated('student'), (req, res) => {
-    const token = req.session.lastOrderToken;
-    if (!token) {
-        return res.redirect('/student/dashboard');
-    }
-    const tokenPagePath = path.join(__dirname, 'public', 'token.html');
-    const html = fs.readFileSync(tokenPagePath, 'utf8');
-    const finalHtml = html.replace('_TOKEN_ID_', token); 
-    req.session.lastOrderToken = null; 
-    res.send(finalHtml);
-});
-
-app.get('/student/my-orders', isAuthenticated('student'), (req, res) => {
-    const studentId = req.session.user.id;
-    const query = `
-        SELECT * FROM orders 
-        WHERE user_id = ? AND status != 'Completed' 
-        ORDER BY created_at DESC
-    `;
-    db.query(query, [studentId], (err, orders) => {
-        if (err) throw err;
-        let ordersHtml = '<h4>You have no active orders.</h4>';
-        if (orders.length > 0) {
-            ordersHtml = orders.map(order => {
-                const items = JSON.parse(order.items);
-                const itemList = items.map(i => `<li>${i.name} (x${i.quantity || 1})</li>`).join('');
-                let statusClass = '';
-                if (order.status === 'Preparing') statusClass = 'status-preparing';
-                if (order.status === 'Ready for Pickup') statusClass = 'status-ready';
-                return `
-                    <div class="order-card-live" id="order-${order.id}">
-                        <div class="order-card-live-header">
-                            <h3>Token #${order.id}</h3>
-                            <span class="order-status-live ${statusClass}">${order.status}</span>
-                        </div>
-                        <ul>${itemList}</ul>
-                    </div>
-                `;
-            }).join('');
-        }
-        const pagePath = path.join(__dirname, 'public', 'my-orders.html');
-        const html = fs.readFileSync(pagePath, 'utf8');
-        res.send(html.replace('', ordersHtml));
-    });
-});
-
-// =================================================================
-// --- STAFF ROUTES ---
-// =================================================================
-app.get('/staff/dashboard', isAuthenticated('staff'), (req, res) => {
-    db.query(`
-        SELECT orders.*, users.username 
-        FROM orders 
-        LEFT JOIN users ON orders.user_id = users.id 
-        WHERE orders.status != 'Completed' 
-        ORDER BY orders.created_at DESC`, 
-        (err, orders) => {
-            if (err) throw err;
-            let ordersHtml = '<h4>No live orders.</h4>';
-            if (orders.length > 0) {
-                ordersHtml = orders.map(order => {
-                    const items = JSON.parse(order.items);
-                    const itemList = items.map(i => `<li>${i.name} x${i.quantity || 1}</li>`).join('');
-                    let actionButton = '';
-                    if (order.status === 'Placed') actionButton = `<button type="submit" name="newStatus" value="Preparing" class="btn btn-action btn-prepare">Start Preparing</button>`;
-                    else if (order.status === 'Preparing') actionButton = `<button type="submit" name="newStatus" value="Ready for Pickup" class="btn btn-action btn-ready">Ready for Pickup</button>`;
-                    else if (order.status === 'Ready for Pickup') actionButton = `<button type="submit" name="newStatus" value="Completed" class="btn btn-action">Complete Order</button>`;
-                    return `
-                        <div class="order-card-staff">
-                            <strong>Token #${order.id}</strong><br>
-                            <strong>Student:</strong> ${order.username || 'Guest'}<br>
-                            <strong>Status:</strong> ${order.status}<br>
-                            <ul>${itemList}</ul>
-                            <form method="POST" action="/staff/update-order-status" class="order-actions">
-                                <input type="hidden" name="orderId" value="${order.id}">
-                                ${actionButton}
-                            </form>
-                        </div>
-                    `;
-                }).join('');
-            }
-            const dashboardPath = path.join(__dirname, 'public', 'staffdashboard.html');
-            const html = fs.readFileSync(dashboardPath, 'utf8');
-            res.send(html.replace('', ordersHtml));
-        });
-});
-
-app.post('/staff/update-order-status', isAuthenticated('staff'), (req, res) => {
-    const { orderId, newStatus } = req.body;
-    db.query('UPDATE orders SET status = ? WHERE id = ?', [newStatus, orderId], (err) => {
-        if (err) throw err;
-        io.emit('order_status_updated', { orderId: orderId, newStatus });
-        res.redirect('/staff/dashboard');
-    });
-});
-
-app.get('/staff/manage-users', isAuthenticated('staff'), (req, res) => {
-    db.query('SELECT id, username, role FROM users WHERE role = "student"', (err, users) => {
-        if (err) throw err;
-        let userListHtml = '<tr><td colspan="3">No users found.</td></tr>';
-        if (users.length > 0) {
-            userListHtml = users.map(user => `<tr><td>${user.id}</td><td>${user.username}</td><td>${user.role}</td></tr>`).join('');
-        }
-        const managePagePath = path.join(__dirname, 'public', 'manage-users.html');
-        const html = fs.readFileSync(managePagePath, 'utf8');
-        res.send(html.replace('', userListHtml));
-    });
-});
-
-app.get('/staff/manage-menu', isAuthenticated('staff'), (req, res) => {
-    db.query('SELECT * FROM menu_items ORDER BY category, name', (err, items) => {
-        if (err) throw err;
-        let menuListHtml = '<tr><td colspan="5">No menu items found.</td></tr>';
-        if (items.length > 0) {
-            menuListHtml = items.map(item => `<tr><td>${item.name}</td><td>₹${item.price}</td><td>${item.category}</td><td><span class="${item.is_available ? 'status-available' : 'status-unavailable'}">${item.is_available ? 'In Stock' : 'Out of Stock'}</span></td><td><form action="/staff/toggle-availability" method="POST"><input type="hidden" name="itemId" value="${item.id}"><button type="submit" class="btn btn-toggle">${item.is_available ? 'Mark Out of Stock' : 'Mark In Stock'}</button></form></td></tr>`).join('');
-        }
-        const manageMenuPage = fs.readFileSync(path.join(__dirname, 'public', 'manage-menu.html'), 'utf8');
-        res.send(manageMenuPage.replace('', menuListHtml));
-    });
-});
-
-app.post('/staff/add-item', isAuthenticated('staff'), (req, res) => {
-    const { name, price, category, imageUrl } = req.body;
-    const newItem = { name, price: parseInt(price, 10), category, imageUrl, is_available: true };
-    db.query('INSERT INTO menu_items SET ?', newItem, (err, result) => {
-        if (err) console.error("Error adding item:", err);
-        res.redirect('/staff/manage-menu');
-    });
-});
-
-app.post('/staff/toggle-availability', isAuthenticated('staff'), (req, res) => {
-    const { itemId } = req.body;
-    const getStatusQuery = 'SELECT is_available FROM menu_items WHERE id = ?';
-    db.query(getStatusQuery, [itemId], (err, results) => {
-        if (err || results.length === 0) return res.redirect('/staff/manage-menu');
-        const newStatus = !results[0].is_available;
-        const updateQuery = 'UPDATE menu_items SET is_available = ? WHERE id = ?';
-        db.query(updateQuery, [newStatus, itemId], (err, result) => {
-            if (err) throw err;
-            res.redirect('/staff/manage-menu');
-        });
-    });
-});
-
-// =================================================================
-// --- SOCKET.IO ---
-// =================================================================
-io.on('connection', (socket) => {
-    console.log('🟢 A user connected');
-    socket.on('disconnect', () => console.log('🔴 User disconnected'));
-});
-
-// =================================================================
-// --- SERVER START ---
+// --- START SERVER ---
 // =================================================================
 server.listen(PORT, () => {
-    console.log(`🚀 Server running at: http://localhost:${PORT}`);
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
