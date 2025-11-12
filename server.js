@@ -108,7 +108,7 @@ app.use(session({
 }));
 
 // =================================================================
-// --- AUTHENTICATION MIDDLEWARE ---
+// --- AUTHENTICATION MIDDLEWARE (IMPROVED) ---
 // =================================================================
 const isAuthenticated = (req, res, next) => {
     if (!req.session.user) {
@@ -119,7 +119,17 @@ const isAuthenticated = (req, res, next) => {
 
 const isStaff = (req, res, next) => {
     if (!req.session.user || req.session.user.role !== 'staff') {
+        // If not staff, redirect to student login
         return res.redirect('/staff-login.html');
+    }
+    next();
+};
+
+// --- NEW ---
+const isStudent = (req, res, next) => {
+    if (!req.session.user || req.session.user.role !== 'student') {
+        // If not student, redirect to student login
+        return res.redirect('/student-login.html');
     }
     next();
 };
@@ -214,7 +224,8 @@ app.post('/login', async (req, res) => {
 // =================================================================
 
 // Student Dashboard - Load Menu
-app.get('/studentdashboard', isAuthenticated, async (req, res) => {
+// --- UPDATED to use isStudent ---
+app.get('/studentdashboard', isStudent, async (req, res) => {
     const fullPath = path.join(__dirname, 'public', 'studentdashboard.html');
     try {
         const menuResult = await db.query('SELECT * FROM menu_items WHERE is_available = 1 ORDER BY id');
@@ -224,6 +235,7 @@ app.get('/studentdashboard', isAuthenticated, async (req, res) => {
             menuHtml = '<p>The canteen is currently not serving any items. Please check back later!</p>';
         } else {
             menuResult.rows.forEach(item => {
+                // Notice the onclick event calls changeQuantity() from the script
                 menuHtml += `
                     <div class="card food-card-grid" data-item-id="${item.id}" data-item-name="${item.name}" data-item-price="${item.price}">
                         <img src="${item.image_url}" alt="${item.name}">
@@ -252,7 +264,8 @@ app.get('/studentdashboard', isAuthenticated, async (req, res) => {
 });
 
 // Place Order (Transaction)
-app.post('/student/place-order', isAuthenticated, async (req, res) => {
+// --- UPDATED to use isStudent ---
+app.post('/student/place-order', isStudent, async (req, res) => {
     const { cartItems } = req.body; // This is a JSON string
     const userId = req.session.user.id;
     
@@ -287,6 +300,7 @@ app.post('/student/place-order', isAuthenticated, async (req, res) => {
         io.emit('new_order', newOrder); 
         
         // Redirect to token page
+        // THIS IS THE CORRECT REDIRECT
         res.redirect(`/student/token/${newOrder.id}`);
 
     } catch (err) {
@@ -299,17 +313,20 @@ app.post('/student/place-order', isAuthenticated, async (req, res) => {
 });
 
 // Get My Orders Page
-app.get('/student/my-orders', isAuthenticated, (req, res) => {
+// --- UPDATED to use isStudent ---
+app.get('/student/my-orders', isStudent, (req, res) => {
     servePage('my-orders.html')(req, res);
 });
 
 // Get Token Page
-app.get('/student/token/:orderId', isAuthenticated, (req, res) => {
+// --- UPDATED to use isStudent ---
+app.get('/student/token/:orderId', isStudent, (req, res) => {
     servePage('token.html')(req, res);
 });
 
 // API: Get orders for "My Orders" page (for fetch)
-app.get('/api/student/my-orders', isAuthenticated, async (req, res) => {
+// --- UPDATED to use isStudent ---
+app.get('/api/student/my-orders', isStudent, async (req, res) => {
     try {
         const query = 'SELECT * FROM orders WHERE user_id = $1 AND created_at > NOW() - INTERVAL \'24 hours\' ORDER BY created_at DESC';
         const result = await db.query(query, [req.session.user.id]);
@@ -321,7 +338,8 @@ app.get('/api/student/my-orders', isAuthenticated, async (req, res) => {
 });
 
 // API: Get single order status (for token page)
-app.get('/api/student/order-status/:orderId', isAuthenticated, async (req, res) => {
+// --- UPDATED to use isStudent ---
+app.get('/api/student/order-status/:orderId', isStudent, async (req, res) => {
     try {
         const query = 'SELECT id, status, total_price, items FROM orders WHERE id = $1 AND user_id = $2';
         const result = await db.query(query, [req.params.orderId, req.session.user.id]);
@@ -341,6 +359,7 @@ app.get('/api/student/order-status/:orderId', isAuthenticated, async (req, res) 
 // =================================================================
 
 // Staff Dashboard - Load Orders
+// --- UPDATED to use isStaff ---
 app.get('/staffdashboard', isStaff, async (req, res) => {
     const fullPath = path.join(__dirname, 'public', 'staffdashboard.html');
     try {
@@ -427,6 +446,7 @@ function buildOrderCard(order) {
 }
 
 // Staff: Update Order Status
+// --- UPDATED to use isStaff ---
 app.post('/staff/update-status', isStaff, async (req, res) => {
     const { orderId, newStatus } = req.body;
     try {
@@ -452,7 +472,7 @@ app.post('/staff/update-status', isStaff, async (req, res) => {
 
 
 // --- Menu Management Routes ---
-
+// --- UPDATED to use isStaff ---
 app.get('/staff/manage-menu', isStaff, async (req, res) => {
     const fullPath = path.join(__dirname, 'public', 'manage-menu.html');
     try {
@@ -490,6 +510,7 @@ app.get('/staff/manage-menu', isStaff, async (req, res) => {
     }
 });
 
+// --- UPDATED to use isStaff ---
 app.post('/staff/menu/add', isStaff, async (req, res) => {
     const { name, price, image_url } = req.body;
     try {
@@ -502,6 +523,7 @@ app.post('/staff/menu/add', isStaff, async (req, res) => {
     }
 });
 
+// --- UPDATED to use isStaff ---
 app.post('/staff/menu/toggle', isStaff, async (req, res) => {
     const { id, current_status } = req.body;
     // New status is the opposite of the current status
@@ -515,6 +537,75 @@ app.post('/staff/menu/toggle', isStaff, async (req, res) => {
         res.status(500).send('Error toggling item.');
     }
 });
+
+// =================================================================
+// --- NEW: USER MANAGEMENT ROUTES ---
+// =================================================================
+app.get('/staff/manage-users', isStaff, async (req, res) => {
+    const fullPath = path.join(__dirname, 'public', 'manage-users.html');
+    try {
+        // We don't want to show the staff's own password hash
+        const result = await db.query('SELECT id, username, role FROM users ORDER BY id');
+        let tableRows = '';
+        
+        result.rows.forEach(user => {
+            tableRows += `
+                <tr>
+                    <td>${user.id}</td>
+                    <td>${user.username}</td>
+                    <td>${user.role}</td>
+                    <td>
+                        ${ user.id === req.session.user.id ? '' : `
+                            <form action="/staff/user/delete" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this user?');">
+                                <input type="hidden" name="userId" value="${user.id}">
+                                <button type="submit" class="btn btn-danger">Delete</button>
+                            </form>
+                        `}
+                    </td>
+                </tr>
+            `;
+        });
+        
+        fs.readFile(fullPath, 'utf8', (err, html) => {
+            if (err) throw err;
+            const finalHtml = html.replace('', tableRows);
+            res.send(finalHtml);
+        });
+    } catch (err) {
+        console.error('Error loading user management:', err);
+        res.status(500).send('Error loading page.');
+    }
+});
+
+app.post('/staff/user/delete', isStaff, async (req, res) => {
+    const { userId } = req.body;
+    
+    // Safety check: Don't let staff delete themselves
+    if (userId == req.session.user.id) {
+        return res.status(400).send("Cannot delete yourself.");
+    }
+    
+    // IMPORTANT: In a real app, you must delete all orders from this user first
+    // or the database will throw an error.
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        // Delete orders associated with the user
+        await client.query('DELETE FROM orders WHERE user_id = $1', [userId]);
+        // Now delete the user
+        await client.query('DELETE FROM users WHERE id = $1', [userId]);
+        await client.query('COMMIT');
+        
+        res.redirect('/staff/manage-users');
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error deleting user and their orders:', err);
+        res.status(500).send('Error deleting user. Make sure all their orders are removed first.');
+    } finally {
+        client.release();
+    }
+});
+
 
 // =================================================================
 // --- SOCKET.IO LOGIC ---

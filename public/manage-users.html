@@ -3,29 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Users</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Manage Users - Canteen</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
 <body>
-    <header class="header">Canteen Admin Panel</header>
-    <div class="container full-width">
-        <div class="card">
-            <h2>Registered Student Details</h2>
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>User ID</th>
-                            <th>Username (Roll No)</th>
-                            <th>Role</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        </tbody>
-                </table>
-            </div>
-            <a href="/staff/dashboard" class="btn btn-secondary">Back to Order Dashboard</a>
+
+    <header class="navbar">
+        <div class="navbar-brand">
+            <img src="/callmyturn (1).png" alt="Logo" class="logo">
+            <span class="navbar-title">Staff Panel</span>
         </div>
-    </div>
+        <nav class="navbar-links">
+            <a href="/staffdashboard">Dashboard</a>
+            <a href="/staff/manage-menu">Manage Menu</a>
+            <a href="/staff/manage-users">Manage Users</a>
+            <a href="/logout" class="btn btn-secondary">Logout</a>
+        </nav>
+    </header>
+
+    <main class="container">
+        
+        <section class="card">
+            <h2>Current Users</h2>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    </tbody>
+            </table>
+        </section>
+
+    </main>
+
 </body>
 </html>
