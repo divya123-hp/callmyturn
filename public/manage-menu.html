@@ -3,56 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Menu</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link rel="stylesheet" href="style.css">
+    <title>Manage Menu - Canteen</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
-<body class="center-layout">
-    <header class="header">
-        <img src="/logo.png" alt="CallMyTurn Logo" class="header-logo">
+<body>
+
+    <header class="navbar">
+        <div class="navbar-brand">
+            <img src="/callmyturn (1).png" alt="Logo" class="logo">
+            <span class="navbar-title">Staff Panel</span>
+        </div>
+        <nav class="navbar-links">
+            <a href="/staffdashboard">Dashboard</a>
+            <a href="/staff/manage-menu">Manage Menu</a>
+            <a href="/logout" class="btn btn-secondary">Logout</a>
+        </nav>
     </header>
 
-    <div class="card" style="max-width: 800px;">
-        <h2>Current Menu Items</h2>
-        <div class="table-container">
-            <table>
+    <main class="container">
+        
+        <section class="card">
+            <h2>Add New Menu Item</h2>
+            
+            <form action="/staff/menu/add" method="POST" class="form-vertical">
+                <div class="form-group">
+                    <label for="name">Item Name</label>
+                    <input type="text" id="name" name="name" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="price">Price (₹)</label>
+                    <input type="number" id="price" name="price" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="image_url">Image URL</label>
+                    <input type="text" id="image_url" name="image_url" placeholder="https://example.com/image.png">
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Add Item</button>
+            </form>
+        </section>
+
+        <section class="card">
+            <h2>Current Menu</h2>
+            <table class="table">
                 <thead>
                     <tr>
-                        <th>Item Name</th>
+                        <th>ID</th>
+                        <th>Image</th>
+                        <th>Name</th>
                         <th>Price</th>
-                        <th>Category</th>
-                        <th>Status</th>
-                        <th>Action</th>
+                        <th>Available?</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     </tbody>
             </table>
-        </div>
+        </section>
 
-        <hr class="divider">
+    </main>
 
-        <h2>Add New Menu Item</h2>
-        <form action="/staff/add-item" method="POST">
-            <div class="form-group">
-                <label for="name">Item Name</label>
-                <input type="text" id="name" name="name" required>
-            </div>
-            <div class="form-group">
-                <label for="price">Price (₹)</label>
-                <input type="number" id="price" name="price" required>
-            </div>
-            <div class="form-group">
-                <label for="category">Category</label>
-                <input type="text" id="category" name="category" placeholder="e.g., Breakfast, Lunch, Snacks" required>
-            </div>
-            <div class="form-group">
-                <label for="imageUrl">Image URL</label>
-                <input type="text" id="imageUrl" name="imageUrl" placeholder="https://example.com/image.jpg">
-            </div>
-            <button type="submit" class="btn"><i class="fas fa-plus"></i> Add Item to Menu</button>
-        </form>
-        <a href="/staff/dashboard" class="btn btn-secondary" style="margin-top: 1rem;">Back to Orders</a>
-    </div>
 </body>
 </html>
